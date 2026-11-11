@@ -1,0 +1,67 @@
+name: Build ATLANTA MACHINE (Windows VST3)
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache JUCE download
+        uses: actions/cache@v4
+        with:
+          path: deps
+          key: juce-8.0.6-${{ runner.os }}
+
+      - name: Show toolchain versions
+        shell: pwsh
+        run: |
+          cmake --version
+          Get-Command cl -ErrorAction SilentlyContinue
+
+      - name: Clean build directory
+        shell: pwsh
+        run: |
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+
+      - name: Configure (Visual Studio 2022, x64)
+        shell: pwsh
+        run: >
+          cmake -S . -B build
+          -G "Visual Studio 17 2022" -A x64
+          -DFETCHCONTENT_BASE_DIR="${{ github.workspace }}/deps"
+
+      - name: Build VST3 (Release)
+        shell: pwsh
+        run: cmake --build build --config Release --target AtlantaMachine_VST3 --parallel
+
+      - name: Locate ATLANTA MACHINE.vst3
+        id: locate
+        shell: pwsh
+        run: |
+          $vst = Get-ChildItem -Path build -Recurse -Directory -Filter "ATLANTA MACHINE.vst3" | Select-Object -First 1
+          if (-not $vst) { Write-Error "ATLANTA MACHINE.vst3 was not generated"; exit 1 }
+          Write-Host "Found: $($vst.FullName)"
+          "vst3_path=$($vst.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Package ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -Recurse -Force "${{ steps.locate.outputs.vst3_path }}" "dist/ATLANTA MACHINE.vst3"
+          Copy-Item -Force README.md dist/README.md
+          Compress-Archive -Path "dist/*" -DestinationPath "ATLANTA-MACHINE-V1-Windows-VST3.zip" -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ATLANTA-MACHINE-V1-Windows-VST3
+          path: ATLANTA-MACHINE-V1-Windows-VST3.zip
+          if-no-files-found: error
